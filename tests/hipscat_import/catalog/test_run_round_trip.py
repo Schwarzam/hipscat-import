@@ -16,10 +16,11 @@ import pyarrow.parquet as pq
 import pytest
 from hipscat.catalog.catalog import Catalog
 from hipscat.pixel_math.hipscat_id import hipscat_id_to_healpix
+from astropy.io import ascii
 
 import hipscat_import.catalog.run_import as runner
 from hipscat_import.catalog.arguments import ImportArguments
-from hipscat_import.catalog.file_readers import CsvReader, get_file_reader
+from hipscat_import.catalog.file_readers import CsvReader, InputReader, get_file_reader
 
 
 @pytest.mark.dask
@@ -569,3 +570,49 @@ def test_import_gaia_minimum(
     assert "Norder" in column_names
     assert "Dir" in column_names
     assert "Npix" in column_names
+
+
+class ECSVReader(InputReader):
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def read(self, input_file):
+        self.regular_file_exists(input_file, **self.kwargs)
+
+        empty_astropy_table = ascii.read(input_file, format="ecsv")
+        yield empty_astropy_table.to_pandas()
+
+    def provenance_info(self):
+        return {}
+
+
+@pytest.mark.dask
+def test_gaia_ecsv(
+    dask_client,
+    formats_dir,
+    tmp_path,
+):
+    input_file = os.path.join(formats_dir, "gaia_epoch.e.csv")
+
+    # reader = ECSVReader()
+    # frame = next(reader.read(input_file))
+    # print(frame.columns)
+
+    args = ImportArguments(
+        output_artifact_name="gaia_e_astropy",
+        input_file_list=[input_file],
+        file_reader=ECSVReader(),
+        ra_column="ra",
+        dec_column="dec",
+        sort_columns="solution_id,source_id",
+        output_path="/home/delucchi/git/hipscat-import/tests/hipscat_import/data",
+        dask_tmp=tmp_path,
+        highest_healpix_order=2,
+        pixel_threshold=3_000,
+        progress_bar=False,
+    )
+
+    runner.run(args, dask_client)
+
+    # Check that the catalog metadata file exists
+    catalog = Catalog.read_from_hipscat(args.catalog_path)
